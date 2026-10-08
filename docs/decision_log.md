@@ -239,5 +239,50 @@ A critical architectural review identified two severe methodological and empiric
    - **Principle II (Pipeline-First)**: Transformation logic resides strictly inside Scikit-Learn's `ColumnTransformer` / `Pipeline` architecture.
    - **Principle III (No Data Leakage)**: Category vocabularies are learned strictly on `X_train` and applied to `X_test`.
    - **Principle IV (Evaluation Honesty)**: Comprehensive cross-validation and test metrics across multiple model families accompany this decision.
-   - **Principle VI (Document As You Build)**: Formally documented in `docs/decision_log.md` (ADR-002) and embedded into `notebooks/02_Data_Preprocessing_Pipeline.ipynb`.
+---
+
+## ADR-003: Comprehensive Data Quality Invariants, Cross-Field Consistency, and Data Leakage Controls
+
+- **Date**: 2026-10-08
+- **Status**: Ratified
+- **Authors**: Athukorala M. B. (Data Engineering), Siribaddana D. S. (Problem Framing & EDA), Nishshanka A. D. N. N. (Model Development), Nawarathna M. S. G. (Evaluation & Diagnostics)
+
+### Context & Problem Statement
+
+Initial exploratory data analysis covered baseline descriptive checks (dataset shape, column types, null counts, `unknown` category frequencies, and target class imbalance). However, an academically rigorous machine learning project requires deep exploration into data quality anomalies, measurement conventions, and operational characteristics that directly dictate preprocessing and modelling decisions (in alignment with the IT3091 Machine Learning rubric).
+
+Specifically, eight critical data quality dimensions required rigorous auditing and formal policy determination:
+1. Exact and feature-subset duplicate records;
+2. Numerical domain range validation;
+3. Categorical cardinality and calendar constraints;
+4. Unusually rare categories and small-sample instability;
+5. Distribution skewness and outlier handling;
+6. Sentinel value semantics (`pdays = 999`);
+7. Cross-field consistency between historical campaign fields (`previous`, `pdays`, `poutcome`);
+8. Post-event data leakage (`duration`).
+
+---
+
+### Empirical Findings Summary
+
+| Dimension / Check | Empirical Evidence | Risk / Modelling Impact | Policy & Preprocessing Decision |
+| :--- | :--- | :--- | :--- |
+| **Exact Duplicates** | Exactly 12 duplicate rows ($0.029\\%$), zero conflicting labels across duplicate feature profiles | Train/test split leakage; objective function overweighting | Prune exact duplicate rows prior to splitting (`df.drop_duplicates()`), preserving 41,176 distinct records |
+| **Numerical Range Validation** | All 10 numerical features satisfy domain bounds; zero illegal negative entries; `cons.conf.idx` entirely negative ($-50.8$ to $-26.9$) | Disparate scales (`nr.employed` $\\sim 5000$ vs `euribor3m` $\\sim 1-5$) distort distance and gradient methods | Apply `StandardScaler` to macroeconomic variables and age; apply `RobustScaler` to heavy-tailed counts |
+| **Categorical Cardinality** | Low-to-moderate cardinalities ($2$ to $12$); 10 months (Jan/Feb absent); 5 weekdays (Sat/Sun absent) | Combinatorial expansion if high; unobserved categories crashing inference | One-Hot Encoding for nominal variables; configure `handle_unknown='ignore'` for production resilience |
+| **Rare Categories** | `default='yes'` ($N=3$, $0.007\\%$), `illiterate` ($N=18$, $0.044\\%$), `dec` ($N=182$, $0.442\\%$) | Zero-sample splits in k-fold CV; erratic weights in unpenalized models | Enforce L2 regularization; interpret `default` primarily as a missingness indicator rather than credit risk |
+| **Outliers & Heavy Tails** | Extreme right skew in `campaign` (max $56$) and `duration` (max $4,918$s); moderate skew in `age` (max $98$) | Distorted variance estimates; risk of discarding high-propensity seniors | Retain elderly records (conversion $> 45\\%$); apply `RobustScaler` to `campaign` and `previous` |
+| **Sentinel Value Semantics** | `pdays = 999` in $96.32\\%$ of records ($N=39,673$); valid elapsed days in $3.68\\%$ ($[0, 27]$ days) | Treating 999 continuously forces arbitrary Euclidean distance and invalid linear slopes | Feature engineer `previously_contacted` binary indicator and `pdays_group` categorical bins; drop raw `pdays` |
+| **Cross-Field Consistency** | $4,110$ records have `previous > 0` but `pdays = 999` (all $4,110$ carry `poutcome = 'failure'`) | Relying solely on `pdays != 999` misclassifies $73.07\\%$ of previously contacted clients as never contacted | Define prior interaction by `previous > 0`; retain both `previous` and `poutcome` in pipeline |
+| **Post-Event Data Leakage** | `duration` strongly correlates with $y$ ($r = +0.405$); median $449$s for subscribers vs $163.5$s for non-subscribers | Duration is unobservable before placing calls; models collapse in pre-call deployment | Strictly drop `duration` from operational predictive feature pipeline (`remainder='drop'`) |
+
+---
+
+### Ratified Architectural Policies
+
+1. **Deduplication Policy**: Exact duplicates are removed prior to train-test splitting in Phase 2 to prevent identical customer profiles from leaking across partitions.
+2. **Sentinel Transformation Policy**: The raw `pdays` column is never supplied directly to scale-dependent or linear estimators. It is transformed into a binary contact flag and discrete recency cohorts via `src.transformers.BankFeatureEngineer`.
+3. **Historical Campaign Feature Preservation**: To prevent loss of information regarding older campaign attempts ($4,110$ failed contacts logged with `pdays = 999`), both `previous` (count of prior contacts) and `poutcome` (historical campaign result) are preserved in the pipeline.
+4. **Data Leakage Quarantine Policy**: In strict compliance with Constitution Principle III (*No Data Leakage*), `duration` is excluded from all candidate model training and production evaluation pipelines.
+
 
