@@ -103,3 +103,141 @@ This divergence created a methodology mismatch between documented project scope 
    - **Principle III (No Data Leakage)**: `train_test_split` is executed prior to any feature transformation. Preprocessing scalers and encoders are fitted strictly on `X_train` and applied to `X_test`.
    - **Principle IV (Evaluation Honesty)**: Target distributions ($11.2656\%$ train vs $11.2649\%$ test) are explicitly published; accuracy alone will not be used; ROC-AUC and PR-AUC will serve as headline metrics.
    - **Principle VI (Document As You Build)**: Documented prior to model training in `docs/decision_log.md`.
+
+---
+
+## ADR-002: Categorical Encoding Strategy for Education: Selection of One-Hot Encoding over Arbitrary Ordinal Ranking
+
+- **Date**: 2026-10-08
+- **Status**: Ratified
+- **Authors**: Athukorala M. B. (Data Engineering), Siribaddana D. S. (Problem Framing & EDA), Nishshanka A. D. N. N. (Model Development), Nawarathna M. S. G. (Evaluation & Diagnostics)
+
+### Context & Problem Statement
+
+In the initial implementation of the Phase 2 preprocessing pipeline ([02_Data_Preprocessing_Pipeline.ipynb](file:///Users/moni/Desktop/ML%20proj/notebooks/02_Data_Preprocessing_Pipeline.ipynb)), the demographic variable `education` was treated as an ordinal feature:
+```python
+ordinal_cols = ['education']
+education_hierarchy = [[
+    'unknown', 'illiterate', 'basic.4y', 'basic.6y', 'basic.9y',
+    'high.school', 'professional.course', 'university.degree'
+]]
+preprocessor = ColumnTransformer(
+    transformers=[
+        ...
+        ('ordinal', OrdinalEncoder(categories=education_hierarchy, handle_unknown='use_encoded_value', unknown_value=-1), ordinal_cols),
+        ...
+    ]
+)
+```
+
+A critical architectural review identified two severe methodological and empirical defects in this configuration:
+1. **Misclassification of Missingness (`unknown`) as an Ordinal Education Level**:
+   The category `unknown` was placed at index position 0, assigning it an ordinal rank strictly lower than `illiterate` (position 1). In domain and measurement theory, `unknown` denotes unobserved or unspecified customer information (item non-response, client privacy preference, or logging omission)—not an educational attainment milestone. Assigning `unknown` to the lowest rank ($0.0$) declares missingness to be worse than illiteracy.
+   Moreover, empirical analysis reveals that clients with `unknown` education exhibit a positive response rate of **$14.50\%$** ($251$ subscribers out of $1,731$ records). This conversion rate is higher than that of `university.degree` holders ($13.72\%$) and nearly double that of `basic.9y` clients ($7.82\%$). Forcing `unknown` to the minimum scalar value ($0.0$) compels linear models to assume the lowest linear response propensity for unobserved records, directly contradicting empirical data.
+2. **Imposition of Artificial Linearity, Monotonicity, and Spurious Metric Distance**:
+   Applying `OrdinalEncoder` assigns integer values $\{0, 1, 2, \dots, 7\}$, which imposes an interval-scale assumption with uniform Euclidean distance:
+   $$\text{dist}(\text{illiterate}, \text{basic.4y}) = \text{dist}(\text{basic.4y}, \text{basic.6y}) = \text{dist}(\text{high.school}, \text{professional.course}) = 1.0$$
+   This implies that advancing from primary school to lower secondary school carries the identical metric interval and behavioral impact as transitioning from high school to professional/vocational training.
+   More critically, the empirical conversion rate across educational levels is **distinctly non-monotonic**:
+   `illiterate` ($22.22\%$) $\rightarrow$ `basic.4y` ($10.25\%$) $\rightarrow$ `basic.6y` ($8.20\%$) $\rightarrow$ `basic.9y` ($7.82\%$) $\rightarrow$ `high.school` ($10.84\%$) $\rightarrow$ `professional.course` ($11.35\%$) $\rightarrow$ `university.degree` ($13.72\%$) $\rightarrow$ `unknown` ($14.50\%$).
+   For linear models (Logistic Regression, Linear SVM, Perceptron, Neural Networks), an ordinal feature forces a single monotonic weight slope $w \cdot x$. This mathematically prevents linear classifiers from capturing the high conversion rates at both the lowest attainment tier (`illiterate`: $22.2\%$) and highest attainment tier (`university.degree`: $13.7\%$) without being penalized by intermediate troughs (`basic.9y`: $7.8\%$).
+3. **Pipeline Inconsistency with Other Demographic Categorical Features**:
+   All other demographic categorical attributes containing `unknown` values (`job`, `marital`, `default`, `housing`, `loan`) were modeled as nominal variables via `OneHotEncoder(handle_unknown='ignore')`, creating discrete binary indicator columns (e.g. `job_unknown`, `marital_unknown`). Isolating `education` for ordinal ranking broke architectural uniformity without theoretical or empirical justification.
+
+---
+
+### Options Considered
+
+#### Option A – Current Ordinal Encoding (`unknown` at Position 0)
+- **Description**: Map categories to integer scalars: `unknown`=0, `illiterate`=1, `basic.4y`=2, `basic.6y`=3, `basic.9y`=4, `high.school`=5, `professional.course`=6, `university.degree`=7.
+- **Evaluation & Fatal Flaws**:
+  - Confounds missing data with lowest educational attainment.
+  - Imposes equal spacing on non-metric qualitative categories.
+  - Constrains linear models to a single monotonic slope ($w = +0.00513$), causing severe probability miscalibration on `illiterate` and `unknown` segments.
+  - Limits tree algorithms to contiguous range splits ($x \le c$), requiring deep, multi-level splits to isolate non-adjacent high-converting segments.
+
+#### Option B – One-Hot Encoding (Nominal Representation, `unknown` as Distinct Category)
+- **Description**: Include `education` in `nominal_cols` along with other demographic features, transforming it via `OneHotEncoder(handle_unknown='ignore', sparse_output=False)` into 8 orthogonal binary indicator columns:
+  `education_basic.4y`, `education_basic.6y`, `education_basic.9y`, `education_high.school`, `education_illiterate`, `education_professional.course`, `education_university.degree`, `education_unknown`.
+- **Empirical Advantages**:
+  - **Zero Arbitrary Ranking**: `unknown` is treated strictly as an unobserved categorical state (`education_unknown = 1`), eliminating false educational ordering.
+  - **Full Non-Monotonic Capacity**: Each education tier receives an independent, unconstrained weight/coefficient in linear models ($w_{\text{illiterate}} = +0.222$, $w_{\text{basic.9y}} = -0.187$, $w_{\text{unknown}} = -0.030$), accommodating the empirical U-shaped response curve.
+  - **Orthogonal Tree Partitioning**: Tree-based ensembles (Random Forest, Gradient Boosting) can isolate any individual category in a single split without range-adjacency constraints.
+  - **Architectural Uniformity**: Aligns with the encoding strategy applied across all other categorical features with missingness (`job`, `marital`, `default`, `housing`, `loan`).
+  - **Negligible Dimensionality Impact**: Adds only 7 net features (expanding total output from 64 to 71 features). Given $N_{\text{train}} = 32,950$, the sample-to-feature ratio is $464:1$, far above any threshold for overfitting.
+
+#### Option C – Natural Ordinal Hierarchy + Separate Missingness Indicator
+- **Description**: Assign genuine educational levels to integers (`illiterate`=0 to `university.degree`=6), impute `unknown` to the median (or mode), and append a binary indicator column `education_is_unknown`.
+- **Evaluation**: While resolving the `unknown` ranking flaw, it preserves the flawed equal-interval and monotonicity constraints across the 7 genuine tiers (forcing `illiterate` $\le$ `basic.4y` $\le \dots \le$ `university.degree`), which fails to match the empirical non-monotonicity. Option C adds pipeline complexity without matching the representational freedom or uniformity of Option B.
+
+---
+
+### Empirical Evidence & Quantitative Benchmark
+
+#### 1. Category Distribution & Empirical Conversion Profile
+
+| Education Category | Count ($N$) | Proportion (%) | Subscribed ($y=1$) | Empirical Rate (%) | OHE Logit Weight ($w_k$) | Option A Assigned Rank |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `unknown` | 1,731 | 4.20% | 251 | **14.50%** | -0.02987 | Rank 0 (Flawed) |
+| `illiterate` | 18 | 0.04% | 4 | **22.22%** | **+0.22202** | Rank 1 |
+| `basic.4y` | 4,176 | 10.14% | 428 | 10.25% | -0.14158 | Rank 2 |
+| `basic.6y` | 2,292 | 5.56% | 188 | 8.20% | +0.03454 | Rank 3 |
+| `basic.9y` | 6,045 | 14.68% | 473 | 7.82% | -0.18660 | Rank 4 |
+| `high.school` | 9,515 | 23.10% | 1,031 | 10.84% | -0.11042 | Rank 5 |
+| `professional.course` | 5,243 | 12.73% | 595 | 11.35% | -0.11854 | Rank 6 |
+| `university.degree` | 12,168 | 29.54% | 1,670 | 13.72% | -0.02623 | Rank 7 |
+
+*Statistical Significance*: Pearson $\chi^2$ test of independence confirms strong non-random association with subscription: $\chi^2 = 193.11$, $p = 3.31 \times 10^{-38}$ ($\text{df}=7$).
+
+#### 2. Univariate Predictive Power
+- **Option A (Ordinal Encoder, unknown=0)**: ROC-AUC = **$0.5407$**, Log-Loss = **$0.35151$**
+- **Option C (Natural Ordinal + Missing Indicator)**: ROC-AUC = **$0.5543$**, Log-Loss = **$0.35043$**
+- **Option B (One-Hot Encoding)**: ROC-AUC = **$0.5598$**, Log-Loss = **$0.34965$**
+
+*Finding*: One-Hot Encoding achieves a **+191 bps lift** in univariate ROC-AUC and lower log-loss over the ordinal representation, confirming that unconstrained categorical representation better preserves predictive signal.
+
+#### 3. Multivariate 5-Fold Stratified Cross-Validation & Held-out Test Benchmarks
+
+| Model Family | Validation Metric | Option A: Current Ordinal (64 feats) | Option B: One-Hot Encoding (71 feats) | Delta / Impact |
+| :--- | :--- | :--- | :--- | :--- |
+| **Logistic Regression** | 5-Fold CV ROC-AUC | $0.7891 \pm 0.0059$ | $0.7890 \pm 0.0064$ | Parity ($-0.0001$) |
+| | 5-Fold CV PR-AUC | $0.4490$ | $0.4487$ | Parity ($-0.0003$) |
+| | Held-out Test ROC-AUC | $0.8019$ | $0.8013$ | Parity ($-0.0006$) |
+| | Held-out Test PR-AUC | $0.4672$ | $0.4666$ | Parity ($-0.0006$) |
+| **Random Forest** | 5-Fold CV ROC-AUC | $0.7954 \pm 0.0039$ | **$0.7961 \pm 0.0031$** | **+0.0007** (Lower variance) |
+| | 5-Fold CV PR-AUC | $0.4620$ | **$0.4656$** | **+0.0036** (+36 bps lift) |
+| | Held-out Test ROC-AUC | $0.8110$ | $0.8102$ | Parity ($-0.0008$) |
+| | Held-out Test PR-AUC | $0.4837$ | **$0.4859$** | **+0.0022** (+22 bps lift) |
+| **HistGradientBoosting** | 5-Fold CV ROC-AUC | $0.7982 \pm 0.0032$ | $0.7976 \pm 0.0041$ | Parity ($-0.0006$) |
+| | 5-Fold CV PR-AUC | $0.4667$ | $0.4664$ | Parity ($-0.0003$) |
+| | Held-out Test ROC-AUC | $0.8113$ | $0.8095$ | Parity ($-0.0018$) |
+| | Held-out Test PR-AUC | $0.4882$ | **$0.4891$** | **+0.0009** (+9 bps lift) |
+
+---
+
+### Decision Outcome
+
+**Ratified Decision**: Adopt **Option B (One-Hot Encoding of Education)** as the primary categorical encoding strategy across the project. Discontinue and abandon the `OrdinalEncoder` hierarchy for `education`.
+
+**Implementation Actions**:
+1. Move `'education'` from `ordinal_cols` to `nominal_cols` in `ColumnTransformer`.
+2. Remove `education_hierarchy` and the `('ordinal', ...)` step from `ColumnTransformer`.
+3. Expand the nominal feature pipeline via `OneHotEncoder(handle_unknown='ignore', sparse_output=False)` to produce 8 distinct indicator features:
+   `education_basic.4y`, `education_basic.6y`, `education_basic.9y`, `education_high.school`, `education_illiterate`, `education_professional.course`, `education_university.degree`, `education_unknown`.
+4. Treat `unknown` strictly as an orthogonal categorical state (`education_unknown = 1`), eliminating its flawed placement below `illiterate`.
+5. Update pipeline output dimensionality from 64 to 71 features.
+6. Re-generate all serialized artifacts (`X_train_processed.csv`, `X_test_processed.csv`, `preprocessor_pipeline.joblib`, `feature_metadata.json`).
+
+---
+
+### Scope Reconciliation & Governance Alignment
+
+1. **Reconciliation Statement**:
+   This decision formally supersedes the initial ordinal encoding assumption in Phase 2 Data Engineering. Preprocessing artifacts and downstream modeling phases will utilize the 71-feature schema established by Option B.
+2. **Constitution Compliance**:
+   - **Principle I (Reproducibility First)**: All transformations execute deterministically with explicit seeds (`random_state=42`).
+   - **Principle II (Pipeline-First)**: Transformation logic resides strictly inside Scikit-Learn's `ColumnTransformer` / `Pipeline` architecture.
+   - **Principle III (No Data Leakage)**: Category vocabularies are learned strictly on `X_train` and applied to `X_test`.
+   - **Principle IV (Evaluation Honesty)**: Comprehensive cross-validation and test metrics across multiple model families accompany this decision.
+   - **Principle VI (Document As You Build)**: Formally documented in `docs/decision_log.md` (ADR-002) and embedded into `notebooks/02_Data_Preprocessing_Pipeline.ipynb`.
+
