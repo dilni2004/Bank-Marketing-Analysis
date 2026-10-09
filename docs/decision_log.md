@@ -285,4 +285,62 @@ Specifically, eight critical data quality dimensions required rigorous auditing 
 3. **Historical Campaign Feature Preservation**: To prevent loss of information regarding older campaign attempts ($4,110$ failed contacts logged with `pdays = 999`), both `previous` (count of prior contacts) and `poutcome` (historical campaign result) are preserved in the pipeline.
 4. **Data Leakage Quarantine Policy**: In strict compliance with Constitution Principle III (*No Data Leakage*), `duration` is excluded from all candidate model training and production evaluation pipelines.
 
+---
+
+## ADR-004: Predictor Feature Family Exploratory Rationales, Non-Linear Representations, and Preprocessing/Modelling Policies
+
+- **Date**: 2026-10-09
+- **Status**: Ratified
+- **Authors**: Athukorala M. B. (Data Engineering), Siribaddana D. S. (Problem Framing & EDA), Nishshanka A. D. N. N. (Model Development), Nawarathna M. S. G. (Evaluation & Diagnostics)
+
+### Context & Problem Statement
+
+Initial exploratory work was largely confined to isolated checks on target imbalance, occupation (`job`), and previous campaign outcome (`poutcome`). To establish a disciplined, academically defensible basis for subsequent preprocessing pipelines and model architectures, the full suite of remaining predictor variables was systematically audited across four major feature families:
+1. **Customer Profile Variables** (`age`, `job`, `marital`, `education`, `default`, `housing`, `loan`);
+2. **Current Campaign Operational Variables** (`contact`, `month`, `day_of_week`, `campaign`);
+3. **Historical Campaign Context Variables** (`previous`, `pdays`, `poutcome`);
+4. **Macroeconomic Indicators** (`emp.var.rate`, `cons.price.idx`, `cons.conf.idx`, `euribor3m`, `nr.employed`).
+
+Each analysis evaluates the underlying empirical pattern, relationship to campaign response ($y$), underlying domain mechanisms, and direct consequences for data engineering and model evaluation.
+
+---
+
+### Empirical Findings by Feature Family
+
+#### 1. Customer Profile Family
+- **Age Non-Linearity & U-Shape**: Overall median ages for non-subscribers ($38.0$) and subscribers ($37.0$) are nearly identical, but the subscriber distribution has $40\%$ higher variance ($\sigma=13.84$ vs $9.90$). Clients under 25 achieve a **$23.97\%$** conversion rate, and seniors aged 60+ achieve a **$39.56\%$** conversion rate. In contrast, prime working-age adults (40–49) convert at only **$7.92\%$**.
+- **Occupation Disparities**: Students ($31.43\%$) and retirees ($25.23\%$) convert at more than double the baseline rate ($11.27\%$), whereas blue-collar workers achieve only $6.89\%$.
+- **Marital Status**: Singles convert at **$14.00\%$** vs married ($10.16\%$) and divorced ($10.32\%$).
+- **Education Non-Monotonicity**: Attainment exhibits a U-shaped response curve: illiterate ($22.22\%$) and university degree ($13.72\%$) outperform intermediate basic school tiers ($7.82\%-10.25\%$). Missing education (`unknown`) converts at $14.50\%$.
+- **Financial Obligations**: Housing loans ($11.62\%$ vs $10.88\%$) and personal loans ($10.93\%$ vs $11.34\%$) have response rates indistinguishable from baseline ($11.27\%$). Credit default `yes` has only 3 instances (zero conversions); `default='unknown'` converts at only $5.15\%$ vs $12.88\%$ for clean credit (`no`).
+
+#### 2. Current Campaign Operational Family
+- **Communication Channel**: Cellular outreach converts at **$14.74\%$** ($N=26,144$) vs **$5.23\%$** for landline telephone ($N=15,044$)—a **$2.8\times$ conversion superiority**.
+- **Monthly Seasonality**: May accounts for $33.43\%$ of all calls ($13,769$ records) but yields the lowest conversion rate ($6.43\%$). Selective campaigns in March ($50.55\%$), September ($44.91\%$), October ($43.87\%$), and December ($48.90\%$) yield exceptional response rates.
+- **Day of Week**: Response rates are stable between $9.95\%$ (Monday) and $12.12\%$ (Thursday) with minimal effect size.
+- **Campaign Contact Fatigue**: Success strictly degrades as contacts accumulate: $13.04\%$ (1 call) $\to 11.46\%$ (2) $\to 9.39\%$ (4) $\to 7.56\%$ (5-6) $\to 5.47\%$ (7-10) $\to 3.11\%$ ($>10$ calls). Extreme right skew (up to 56 calls).
+
+#### 3. Historical Campaign Context Family
+- **Prior Contact Volume**: Virgin leads (`previous = 0`, $86.34\%$) convert at only $8.83\%$; 1 prior contact converts at $21.20\%$; 2 prior contacts convert at $46.42\%$; 3 contacts convert at $59.26\%$.
+- **Contact Recency**: Clients contacted within 0–6 days (`pdays <= 6`) achieve a **$65-66\%$** conversion rate. Uncontacted clients (`pdays = 999`, $96.32\%$) convert at only $9.26\%$.
+- **Historical Outcome**: `poutcome = 'success'` achieves **$65.11\%$ conversion** ($5.8\times$ lift over baseline). `failure` converts at $14.23\%$, still outperforming virgin cold leads ($8.83\%$).
+
+#### 4. Macroeconomic Indicator Family
+- **Inverse Macro Trends**: Primary indicators exhibit the strongest linear correlations with response in the dataset: `nr.employed` ($r = -0.355$), `euribor3m` ($r = -0.308$), and `emp.var.rate` ($r = -0.298$). In the lowest Euribor quintile ($[0.634, 1.281]$), conversion approaches $50\%$; above $4.8$, conversion collapses to under $4.5\%$.
+- **Severe Multicollinearity**:
+  - $\text{corr}(\text{euribor3m}, \text{emp.var.rate}) = +0.972$
+  - $\text{corr}(\text{euribor3m}, \text{nr.employed}) = +0.945$
+  - $\text{corr}(\text{emp.var.rate}, \text{nr.employed}) = +0.907$
+  - $\text{corr}(\text{emp.var.rate}, \text{cons.price.idx}) = +0.775$
+
+---
+
+### Ratified Preprocessing & Modelling Policies
+
+1. **Life-Stage Non-Linearity Engineering**: `age` is transformed into binned demographic cohorts (`age_group`: `<30`, `30-39`, `40-49`, `50-59`, `60+`) via `src.transformers.BankFeatureEngineer` to enable linear estimators to fit positive weights to youth and senior segments. Continuous `age` is standardized via `StandardScaler`.
+2. **Nominal One-Hot Encoding**: Reaffirms ADR-002. All qualitative features (`job`, `marital`, `education`, `default`, `housing`, `loan`, `contact`, `month`, `day_of_week`, `poutcome`) are One-Hot Encoded with `handle_unknown='ignore'`.
+3. **Heavy-Tail Robust Scaling**: `campaign` and `previous` exhibit extreme right skew and outliers; they are scaled strictly with `RobustScaler` (median & IQR centering) to prevent distorted scale estimates.
+4. **Macroeconomic Standardization & Regularization**: All 5 economic indicators are standardized via `StandardScaler` to prevent magnitude domination by `nr.employed`. To control severe collinearity ($r > 0.95$), linear candidate models must enforce L2 regularization (Ridge penalty) or ElasticNet. Tree models are approved for evaluation without collinearity filtering.
+5. **Cold-Lead Subgroup Evaluation**: Because `poutcome_success` and prior contact indicators dominate prediction, model evaluation must assess discriminative performance (ROC-AUC / PR-AUC) on both warm leads and virgin cold leads ($86\%$ of the operational customer base).
+
 
