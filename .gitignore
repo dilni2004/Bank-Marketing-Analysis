@@ -4,3 +4,7 @@
 .agents/
 .specs/
 specs/
+__pycache__/
+*.pyc
+**/*.pyc
+.mplconfig/
