@@ -70,10 +70,12 @@ The table below adheres to the standardized 7-column schema:
   - Treating 999 as a continuous numeric distance assumes that an uncontacted customer is 166 times "further" than a customer contacted 6 days ago.
   - Relying solely on `pdays != 999` would misclassify $4,110$ warm leads as never contacted.
 - **Pipeline Implementation**:  
-  `src.transformers.BankFeatureEngineer` executes a three-part transformation:
-  1. Derives `previously_contacted = (pdays != 999).astype(int)`;
-  2. Discretizes `pdays` into `pdays_group` (`0_to_6_days`, `7_to_14_days`, `15_plus_days`, `not_contacted`);
-  3. Drops the raw `pdays` column to eliminate the sentinel 999 from distance and scale calculations, while preserving `previous` count and `poutcome` in downstream transformers.
+  `src.transformers.BankFeatureEngineer` executes a verified, contract-tested domain transformation:
+  1. Derives `previously_contacted = (pdays != 999).astype(int)` (guaranteeing $pdays = 999 \implies 0$ and all valid contacted $0 \le pdays \le 998 \implies 1$);
+  2. Discretizes `pdays` into `pdays_group` (`0_to_6_days`, `7_to_14_days`, `15_plus_days`, `not_contacted`) with precise boundaries ($6 \to 0\_to\_6\_days$, $7 \to 7\_to\_14\_days$, $14 \to 7\_to\_14\_days$, $15 \to 15\_plus\_days$, $998 \to 15\_plus\_days$, $999 \to not\_contacted$);
+  3. Drops the raw `pdays` column to eliminate the sentinel 999 from distance and scale calculations, while preserving `previous` count and `poutcome` in downstream transformers;
+  4. Enforces strict input validation: rejects out-of-range ($pdays < 0$ or $pdays > 999$), non-numeric, or missing values with clear `ValueError` exceptions, preventing unassigned bins or unintended `'nan'` strings from being created by `.astype(str)`;
+  5. Provides programmatic cross-field inconsistency identification (`identify_inconsistent_records`) detecting the legacy CRM failure anomaly ($N = 4,110$) and contradictory historical records.
 
 ---
 
