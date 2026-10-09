@@ -2,6 +2,8 @@
 
 This document serves as the canonical record of architectural and methodological decisions for the **Machine Learning Based Campaign Response Prediction for Bank Marketing** project, in adherence to Constitution Principle VI (*Document As You Build*).
 
+> **Complementary Artifact**: For the structured exploratory empirical evidence table mapping individual dataset variables and distributions directly to machine learning implications, consult the [EDA Insight & Evidence Log](file:///Users/moni/Desktop/ML%20proj/docs/eda_insight_log.md).
+
 ---
 
 ## ADR-001: Validation Split Strategy: Selection of Stratified Random Holdout over Chronological Partitioning
