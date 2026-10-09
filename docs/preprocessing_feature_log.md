@@ -97,12 +97,16 @@ The table below adheres to the standardized 7-column schema:
 ### 3.4 Missingness as an Informative Behavioral Signal (`PRE-04`)
 
 - **Context & Empirical Findings**:  
+  Several fields contain literal `"unknown"` values rather than NaN.
   Missing values in categorical fields are explicitly coded as `'unknown'`:
   - `default`: $8,597$ records ($20.87\%$) are `'unknown'`, converting at only $5.15\%$ vs $12.88\%$ for clean credit (`no`). Only 3 records have `default = 'yes'` ($0.007\%$, zero conversions).
   - `education`: $1,731$ records ($4.20\%$) are `'unknown'`, converting at $14.50\%$ vs $13.72\%$ for university degree holders.
   - `housing` & `loan`: $990$ records ($2.40\%$) are `'unknown'`.
-- **Core Engineering Implication**:  
-  In telemarketing operations, `'unknown'` does not reflect missing-at-random (MAR) noise; it represents customer non-disclosure, CRM field omission, or client refusal. Because unobserved credit status yields a distinct, substantially lower conversion rate ($5.15\%$), dropping missing records or imputing them with the mode (`default = 'no'`) destroys a powerful predictive signal and discards over $26\%$ of the training dataset.
+- **Project-Wide Policy for `"unknown"`**:  
+  - **No rows are silently dropped** because of `"unknown"`. Dropping records with missing values would discard over $26\%$ of the training dataset.
+  - **Do not silently treat it as ordinary missingness**.
+  - **Retain as a separate category**: In telemarketing operations, `'unknown'` does not reflect missing-at-random (MAR) noise; it represents customer non-disclosure, CRM field omission, or client refusal. Because unobserved credit status yields a distinct, substantially lower conversion rate ($5.15\%$), imputing them with the mode (`default = 'no'`) destroys a powerful predictive signal.
+  - **Consistency**: The handling of `"unknown"` is strictly consistent between EDA and preprocessing. The handling of `education='unknown'` is strictly consistent with this policy and the ratified ADR-002 decision.
 - **Pipeline Implementation**:  
   `unknown` is preserved as an explicit, valid category level across all categorical features via `OneHotEncoder(handle_unknown='ignore')`.
 
