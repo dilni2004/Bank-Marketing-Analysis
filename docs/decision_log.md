@@ -2,7 +2,9 @@
 
 This document serves as the canonical record of architectural and methodological decisions for the **Machine Learning Based Campaign Response Prediction for Bank Marketing** project, in adherence to Constitution Principle VI (*Document As You Build*).
 
-> **Complementary Artifact**: For the structured exploratory empirical evidence table mapping individual dataset variables and distributions directly to machine learning implications, consult the [EDA Insight & Evidence Log](file:///Users/moni/Desktop/ML%20proj/docs/eda_insight_log.md).
+> **Complementary Artifacts**:
+> - **Exploratory Empirical Evidence**: Consult the [EDA Insight & Evidence Log](eda_insight_log.md) for variable-by-variable empirical findings mapped to ML implications.
+> - **Data Engineering & Preprocessing Evidence**: Consult the [Preprocessing Decision & Feature Engineering Log](preprocessing_feature_log.md) for the auditable catalog of all 10 pipeline transformation decisions (`PRE-01` to `PRE-10`), evaluated alternatives, and Scikit-Learn code mappings.
 
 ---
 
