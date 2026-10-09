@@ -30,14 +30,26 @@ class BankFeatureEngineer(BaseEstimator, TransformerMixin):
        - Guarantees that no unexpected 'nan' string values are produced by string conversion.
        - Drops the raw numeric 'pdays' column to prevent sentinel 999 scale distortion.
     
-    3. 'age_group' (demographic life-stage cohorts):
+    3. 'age_group' (demographic life-stage cohorts & intentional dual representation):
        - If 'age' is present in the input DataFrame, categorizes continuous age into:
          * age <= 29               -> '<30'
          * 30 <= age <= 39         -> '30-39'
          * 40 <= age <= 49         -> '40-49'
          * 50 <= age <= 59         -> '50-59'
          * 60 <= age <= 120        -> '60+'
-       - Preserves the continuous 'age' column for downstream scaling (StandardScaler).
+       - Intentional Dual Representation (PRE-09, ADR-004):
+         * Retains both continuous 'age' (scaled via StandardScaler) and categorical 'age_group'
+           (one-hot encoded via OneHotEncoder) in the pipeline output.
+         * Categorical 'age_group' equips linear models (Logistic Regression) to fit independent
+           step-function coefficients capturing the empirical U-shaped conversion curve (youth <25:
+           23.97%, seniors 60+: 39.56% vs 40-49: 7.92%, EDA-07).
+         * Continuous 'age' is deliberately preserved (unlike 'pdays', which is dropped below to
+           eliminate sentinel 999 distortion) to provide granular split points for tree ensembles
+           (Random Forest, HistGradientBoosting) and localized within-bracket ranking.
+         * Collinearity between continuous age and indicator bins is managed via regularized estimation
+           (L2 Ridge / ElasticNet), which is mandatory under project modeling standards.
+         * Retention Invariant: Neither representation shall be removed from the pipeline until
+           empirical multi-model cross-validation ablation evidence justifies pruning.
 
     4. Campaign Cross-Field Inconsistency Identification:
        - Identifies anomalous records across historical campaign columns ('pdays', 'previous', 'poutcome').
@@ -270,7 +282,18 @@ class BankFeatureEngineer(BaseEstimator, TransformerMixin):
             raise ValueError("Unexpected 'nan' string value produced by .astype(str) in pdays_group.")
         X_out['pdays_group'] = pdays_str
 
-        # 3. Demographic life-stage cohorts (if 'age' present)
+        # 3. Demographic life-stage cohorts & intentional dual representation (if 'age' present):
+        # - Dual Representation Rationale (PRE-09, ADR-004):
+        #   Discretizes continuous age into semantic life-stage cohorts ('age_group') to allow
+        #   linear models (e.g. Logistic Regression) to fit step-function lifts capturing the
+        #   empirical U-shaped response profile (youth <25: 23.97%, seniors 60+: 39.56% vs
+        #   middle-aged 40-49: 7.92%, EDA-07).
+        # - Retention Invariant:
+        #   Raw continuous 'age' is DELIBERATELY PRESERVED in X_out (unlike 'pdays', which is
+        #   dropped below to eliminate sentinel 999 scale distortion). Preserving continuous 'age'
+        #   provides granular metric distances and within-bracket split resolution for tree-based
+        #   ensembles (Random Forest, HistGradientBoosting) and continuous StandardScaler scaling.
+        # - Neither representation shall be removed until supported by empirical model ablation evidence.
         if 'age' in X_out.columns:
             age_cut = pd.cut(
                 X_out['age'],

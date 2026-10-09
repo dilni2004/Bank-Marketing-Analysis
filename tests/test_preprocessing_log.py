@@ -111,9 +111,11 @@ class TestPreprocessingDecisionLogContract(unittest.TestCase):
         self.assertIn("pdays_group", out.columns)
         self.assertEqual(list(out["pdays_group"]), ["not_contacted", "0_to_6_days", "7_to_14_days", "15_plus_days"])
 
-        # PRE-09: age_group created
-        self.assertIn("age_group", out.columns)
+        # PRE-09: age_group created and continuous age preserved (dual representation)
+        self.assertIn("age", out.columns, "Continuous 'age' must be preserved under dual representation.")
+        self.assertIn("age_group", out.columns, "Engineered 'age_group' must be present.")
         self.assertEqual(list(out["age_group"]), ["<30", "30-39", "40-49", "60+"])
+        self.assertEqual(list(out["age"]), [24, 34, 45, 65])
 
         # PRE-10: raw pdays dropped
         self.assertNotIn("pdays", out.columns)

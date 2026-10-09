@@ -125,6 +125,19 @@ class TestBankFeatureEngineerBoundaryValues(unittest.TestCase):
         expected_age_groups = ["<30", "<30", "30-39", "30-39", "40-49", "40-49", "50-59", "60+"]
         self.assertEqual(list(out["age_group"]), expected_age_groups)
 
+    def test_dual_age_representation_preserves_continuous_age(self):
+        """Validate intentional dual representation: continuous 'age' is preserved alongside 'age_group'."""
+        df = pd.DataFrame({
+            "pdays": [999, 4, 10, 20],
+            "age": [24, 34, 45, 65]
+        })
+        out = self.transformer.transform(df)
+        self.assertIn("age", out.columns, "Continuous 'age' must be preserved in output under dual representation policy.")
+        self.assertIn("age_group", out.columns, "Engineered 'age_group' must be present in output.")
+        self.assertEqual(list(out["age"]), [24, 34, 45, 65])
+        self.assertEqual(list(out["age_group"]), ["<30", "30-39", "40-49", "60+"])
+        self.assertNotIn("pdays", out.columns, "Raw 'pdays' must be dropped.")
+
 
 class TestBankFeatureEngineerNoNanStringAndCompleteness(unittest.TestCase):
     """Validates that no unassigned/NaN groups exist and no unexpected 'nan' strings are created."""

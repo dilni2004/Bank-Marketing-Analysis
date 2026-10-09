@@ -41,7 +41,7 @@ The table below adheres to the standardized 7-column schema:
 | **PRE-06** | Nominal Categorical Encoding | Target/Impact Encoding / Frequency/Count Encoding / One-Hot Encoding (`handle_unknown='ignore'`) | **One-Hot Encoding** | Low-to-moderate cardinalities ($2$ to $12$ levels) yield manageable feature expansion ($+71$ total features, $464:1$ sample-to-feature ratio). Avoids target leakage inherent to target encoding; enables independent coefficient estimation without ordinal metric assumptions. | Cardinality audit; EDA-02, EDA-09, EDA-10, EDA-11, EDA-16; ADR-003, ADR-004. | `Ratified` |
 | **PRE-07** | Contact Recency Discretization (`pdays`) | Keep continuous after remapping 999 / Single binary contacted flag / Discrete recency cohorts | **Discrete recency cohorts (`pdays_group`)** | Conversion decays non-linearly with elapsed days: $\le 6$ days converts at $65.8\%$, $7-14$ days at $52.4\%$, $>14$ days at $41.7\%$, uncontacted at $9.26\%$. Binned cohorts (`0_to_6_days`, `7_to_14_days`, `15_plus_days`, `not_contacted`) enable linear models and decision trees to capture the step-function response decay. | Bivariate recency conversion progression; EDA-05; Section 4.6 in EDA log. | `Ratified (Bin cutoffs tunable)` |
 | **PRE-08** | Prior Contact Indicator Derivation | Rely exclusively on `previous > 0` / Rely on `poutcome` / Derive binary indicator from `pdays != 999` | **Derive `previously_contacted`** | Provides an explicit, high-signal binary split distinguishing virgin leads ($96.3\%$) from warm re-engagement leads ($3.7\%$). Works in tandem with `previous` count and `poutcome` to isolate the $4,110$ older failed attempts logged with `pdays = 999`. | Cross-field anomaly diagnostics; EDA-05, EDA-06; Section 4.7 in EDA log; ADR-003. | `Ratified` |
-| **PRE-09** | Demographic Life-Stage Cohorts (`age`) | Continuous standardized age only / Equal-width interval binning / Domain life-stage cohorts alongside continuous age | **Domain life-stage cohorts (`age_group`)** | Age displays a pronounced U-shaped conversion profile: youth ($<25$: $23.97\%$) and seniors ($60+$: $39.56\%$) convert at elevated rates, while prime workers ($40-49$) convert at only $7.92\%$. Categorical binning (`<30`, `30-39`, `40-49`, `50-59`, `60+`) enables linear estimators to capture non-linear extremes without trimming high-propensity seniors as outliers. | Stratified age KDE; life-stage conversion table; IQR outlier audit; EDA-07; ADR-004. | `Ratified (Cohort cuts tunable)` |
+| **PRE-09** | Demographic Life-Stage Representation (`age`) | Raw continuous age only / Categorical age_group only / Dual representation (both continuous and categorical retained) | **Dual representation (both retained)** | Demographic response is non-linear (U-shaped: youth $23.97\%$, seniors $39.56\%$ vs $40-49$ at $7.92\%$). Categorical cohorts enable linear models to capture non-linear extremes; continuous standardized age preserves fine-grained ranking for tree ensembles and localized calibration. Both are retained pending empirical model ablation. | Stratified age KDE; life-stage conversion table; IQR outlier audit; EDA-07; ADR-004; Section 3.7. | `Ratified (Dual Representation, Subject to Model Ablation)` |
 | **PRE-10** | Elimination of Raw Sentinel Column | Retain raw `pdays` alongside engineered features / Impute 999 to 0 and retain / Drop raw `pdays` column | **Drop raw `pdays`** | All domain predictive signals are completely captured by `previously_contacted` and `pdays_group`. Retaining raw `pdays` containing $96.3\%$ sentinel 999 values introduces severe scale distortion in standard scalers and massive spurious Euclidean penalties in distance/gradient models. | Sentinel scale distortion analysis; EDA-05; ADR-003. | `Ratified` |
 
 ---
@@ -135,14 +135,43 @@ The table below adheres to the standardized 7-column schema:
 
 ---
 
-### 3.7 Life-Stage Non-Linearity Engineering (`PRE-09`, ADR-004)
+### 3.7 Life-Stage Non-Linearity Engineering & Dual Representation Strategy (`PRE-09`, ADR-004)
 
-- **Context & Empirical Findings**:  
-  Overall median age for non-subscribers ($38.0$) and subscribers ($37.0$) is nearly identical, but the subscriber distribution has $40\%$ higher variance ($\sigma = 13.84$ vs $9.90$). Clients under 25 achieve a $23.97\%$ conversion rate, and seniors aged 60+ achieve a $39.56\%$ conversion rate ($>45\%$ for $65+$). Prime working-age adults ($40-49$) convert at only $7.92\%$.
-- **Core Engineering Implication**:  
-  Standard linear models cannot fit a U-shaped response curve using a single continuous feature ($w \cdot \text{age} \approx 0$). Furthermore, naive outlier trimming based on standard IQR bounds would discard $1,020$ elderly records—the bank's highest-converting demographic segment.
+- **Context & Empirical Findings (EDA-07)**:  
+  Overall median age for non-subscribers ($38.0$) and subscribers ($37.0$) is virtually identical, but the subscriber distribution has $40\%$ higher variance ($\sigma = 13.84$ vs $9.90$). Conversion across age brackets displays a pronounced, non-monotonic U-shaped response profile:
+  - Youth ($<25$ years): **$23.97\%$** conversion rate ($N = 1,068$)
+  - Young adults ($25-29$ years): **$13.43\%$** conversion rate ($N = 4,604$)
+  - Working age ($30-39$ years): **$10.16\%$** conversion rate ($N = 16,938$)
+  - Prime working age ($40-49$ years): **$7.92\%$** conversion rate ($N = 10,485$) — *lowest conversion tier*
+  - Mature adults ($50-59$ years): **$9.95\%$** conversion rate ($N = 6,847$)
+  - Seniors ($60+$ years): **$39.56\%$** conversion rate ($N = 1,246$) — *highest conversion tier ($>45\%$ for $65+$)*
+  
+  Furthermore, naive outlier trimming based on standard IQR bounds would discard $1,020$ elderly records ($>69$ years)—the bank's highest-converting demographic segment.
+
+- **Systematic Evaluation of Preprocessing Alternatives**:
+  1. *Alternative 1: Raw Continuous Age Only (`StandardScaler`)*:
+     - *Advantages*: Zero feature redundancy; minimal dimensionality; preserves exact ranking order and metric distances across $[17, 98]$ years.
+     - *Fatal Flaw*: Linear models fitting $w \cdot \text{age}$ estimate a near-zero slope ($w \approx 0$) because median converter and non-converter ages balance out. The linear model is mathematically blind to the U-shaped response and fails to prioritize high-propensity youth and seniors.
+  2. *Alternative 2: Categorical `age_group` Only (`OneHotEncoder`)*:
+     - *Advantages*: Captures non-linear life stages cleanly in linear models via independent indicator weights ($w_{<30}$, $w_{60+}$, etc.); eliminates collinearity with continuous age.
+     - *Fatal Flaw*: Coarse discretization causes significant information loss and artificial boundary discontinuities (e.g., treating age 29 and 30 as distinct categories while forcing age 30 and 39 into identical coefficients). High-capacity tree ensembles (Random Forest, Gradient Boosting) are deprived of granular continuous split points.
+  3. *Alternative 3: Dual Representation (Both Continuous `age` and Categorical `age_group`) [Selected]*:
+     - *Advantages*: Provides complementary inductive biases across model families. Linear models utilize the categorical indicators to capture macro life-stage lifts while adjusting continuous calibration; tree ensembles retain full split resolution on raw continuous age.
+     - *Trade-Off & Risk*: Introduces redundant representation and potential collinearity between continuous age and indicator variables.
+     - *Mitigation*: In linear models, regularized estimation (L2 Ridge penalty / ElasticNet) inherently stabilizes correlated features and prevents variance inflation. In tree-based ensembles, correlated features do not impair predictive performance.
+
+- **Policy & Retention Invariant**:  
+  **Neither feature shall be removed from the transformation pipeline until empirical evidence from systematic model benchmarking or ablation experiments supports removal.** Dual representation is the deliberate, ratified preprocessing strategy for the active baseline pipeline.
+
+- **Quantitative Model Ablation Gating Criteria**:  
+  Transitioning to a single representation in downstream phases is strictly gated on 5-fold stratified cross-validation ablation benchmarks across three distinct model families (regularized Logistic Regression, Random Forest, and HistGradientBoosting). A single representation may only be adopted if:
+  1. $\Delta \text{ROC-AUC}_{\text{CV}} \ge -0.001$ and $\Delta \text{PR-AUC}_{\text{CV}} \ge -0.001$ across **all three** model families; AND
+  2. Out-of-fold probability calibration (Brier Score) does not deteriorate; AND
+  3. Collinearity diagnostics confirm tangible instability that L2 regularization cannot resolve.  
+  If linear models suffer from the loss of `age_group` or tree models suffer from the loss of continuous `age`, dual representation remains permanently ratified.
+
 - **Pipeline Implementation**:  
-  `BankFeatureEngineer` categorizes `age` into demographic cohorts (`age_group`: `<30`, `30-39`, `40-49`, `50-59`, `60+`) while preserving continuous standardized `age`. This enables linear estimators to assign large positive weights to youth and senior brackets while retaining granular continuous age variation.
+  `src.transformers.BankFeatureEngineer` generates `age_group` (`<30`, `30-39`, `40-49`, `50-59`, `60+`) while explicitly preserving continuous `age`. In the downstream `ColumnTransformer`, continuous `age` is scaled via `StandardScaler` in `standard_num_cols`, and `age_group` is one-hot encoded via `OneHotEncoder(handle_unknown='ignore')` in `nominal_cols`.
 
 ---
 
@@ -180,6 +209,6 @@ This master table is formatted for direct transfer into Section 2.2 (*Data Prepr
 | PRE-06 | Nominal Encoding | Target / Frequency / One-Hot | One-Hot Encoding | Low cardinality (2-12); avoids target leakage | Cardinality audit / EDA-09, 10, 11 | Ratified |
 | PRE-07 | Recency Discretization | Continuous / Binary / Cohorts | Cohorts (pdays_group)| Recency decay (0-6d: 65.8% vs 15+d: 41.7%) | Recency response table / EDA-05 | Ratified |
 | PRE-08 | Prior Contact Flag | None / Derive from pdays | previously_contacted | High-signal binary split (63.8% vs 9.3% conversion) | Cross-field audit / EDA-05, 06 | Ratified |
-| PRE-09 | Life-Stage Cohorts | Continuous only / Cohorts | age_group + continuous | U-shaped conversion (<25: 24%, 60+: 40%, 40s: 8%) | Stratified age KDE / EDA-07, ADR-004 | Ratified |
+| PRE-09 | Age Representation Strategy | Raw age only / age_group only / Dual representation | Dual representation (both) | U-shaped conversion (<25: 24%, 60+: 40%, 40s: 8%); balances non-linear capacity and continuous ranking | Stratified age KDE / EDA-07, ADR-004 | Ratified (Ablation-gated) |
 | PRE-10 | Drop Raw pdays | Retain / Impute / Drop | Drop raw pdays | Signals captured in groups; prevents scale distortion | Scale distortion analysis / EDA-05 | Ratified |
 ```
