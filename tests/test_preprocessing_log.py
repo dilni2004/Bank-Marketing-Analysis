@@ -11,6 +11,8 @@ from src.transformers import BankFeatureEngineer
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DOC_PATH = os.path.join(PROJECT_ROOT, "docs", "preprocessing_feature_log.md")
+if not os.path.exists(DOC_PATH):
+    DOC_PATH = os.path.join(PROJECT_ROOT, "docs", "prepro", "preprocessing_feature_log.md")
 
 class TestPreprocessingDecisionLogContract(unittest.TestCase):
     """Validates structure, schema, completeness, and code concordance of preprocessing log."""
@@ -88,9 +90,11 @@ class TestPreprocessingDecisionLogContract(unittest.TestCase):
     def test_05_cross_reference_files_exist(self):
         """Verify related documentation and code assets exist on disk."""
         eda_log = os.path.join(PROJECT_ROOT, "docs", "eda_insight_log.md")
+        if not os.path.exists(eda_log):
+            eda_log = os.path.join(PROJECT_ROOT, "docs", "EDA", "eda_insight_log.md")
         dec_log = os.path.join(PROJECT_ROOT, "docs", "decision_log.md")
         trans_file = os.path.join(PROJECT_ROOT, "src", "transformers.py")
-        self.assertTrue(os.path.exists(eda_log), "docs/eda_insight_log.md missing")
+        self.assertTrue(os.path.exists(eda_log), "docs/EDA/eda_insight_log.md missing")
         self.assertTrue(os.path.exists(dec_log), "docs/decision_log.md missing")
         self.assertTrue(os.path.exists(trans_file), "src/transformers.py missing")
 
