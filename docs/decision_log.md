@@ -348,3 +348,38 @@ Each analysis evaluates the underlying empirical pattern, relationship to campai
 5. **Cold-Lead Subgroup Evaluation**: Because `poutcome_success` and prior contact indicators dominate prediction, model evaluation must assess discriminative performance (ROC-AUC / PR-AUC) on both warm leads and virgin cold leads ($86\%$ of the operational customer base).
 
 
+---
+
+## ADR-005: Phase 4 Evaluation Protocol, Operational Threshold Policy, and Target Leakage Guardrails
+
+- **Date**: 2026-10-11
+- **Status**: Ratified
+- **Authors**: Nawarathna M. S. G. (Evaluation & Diagnostics, Phase 4 Owner), Nishshanka A. D. N. N. (Modeling), Athukorala M. B. (Data Engineering)
+
+### Context & Problem Statement
+Phase 4 encompasses the formal holdout evaluation, calibration diagnostics, business translation, and error profiling of candidate models trained during Phase 3. Tele-marketing lead response exhibits severe class imbalance (~11.27% positive response), making conventional accuracy misleading. Furthermore, bank stakeholders require operational decision cutoffs mapped to call center capacities, and the academic rubric mandates rigorous proof that post-contact target leakage (specifically `duration`) is completely excluded.
+
+### Decisions & Policy Ratifications
+
+#### 1. Metric Hierarchy: PR-AUC (Average Precision) as Primary Evaluation Criterion
+- **Decision**: Candidate models are ranked primarily by Precision-Recall Area Under Curve (PR-AUC / Average Precision), with ROC-AUC as the secondary ranking metric.
+- **Rationale**: With only 928 positive subscribers across 8,236 test samples (11.27%), the massive negative majority (88.73%) artificially deflates the False Positive Rate in ROC space. PR-AUC directly penalizes false positive alarms and evaluates true subscriber retrieval across all thresholds.
+- **Outcome**: `HistGradientBoosting (Tuned)` and default `HistGradientBoosting` are confirmed as co-champions, achieving Holdout PR-AUC of 0.4906 and ROC-AUC of 0.8132, significantly outperforming linear (0.4472) and dummy baselines (0.1127).
+
+#### 2. Generalization Verification Protocol
+- **Decision**: Tabulate and audit the generalization delta between 5-fold cross-validation benchmarks and the untouched test holdout (`Delta = CV - Holdout Test`).
+- **Outcome**: Holdout PR-AUC delta is negative (-0.0210 for tuned boosting), proving the absence of test-set data snooping or overfitting.
+
+#### 3. Operational Threshold Policies
+- **Decision**: Reject the default 0.50 cutoff as economically arbitrary. Formally adopt three operational decision thresholds:
+  1. **Balanced Harvesting (Threshold = 0.68)**: Max F1 (0.5273) and balanced accuracy (0.7533), achieving a 47.77% hit rate and 58.84% recall while contacting only 13.9% of total leads.
+  2. **High-Precision Policy (Threshold = 0.72)**: Guarantees >50% hit rate (Precision: 50.69%) for capacity-constrained sales forces, mitigating agent call fatigue.
+  3. **High-Recall Policy (Threshold = 0.26)**: Captures >80% of all available term deposit subscribers (Recall: 80.39%) for aggressive market expansion campaigns.
+
+#### 4. Decile Lift & Cumulative Gains Capacity Model
+- **Decision**: Translate model discrimination into an operational contact table across 10 deciles.
+- **Outcome**: Contacting the top 20% highest-scoring leads captures 66.92% of all actual depositors (3.34x lift over random outreach), enabling branch managers to eliminate 80% of wasteful cold calls.
+
+#### 5. Strict Zero Data Leakage Enforcement & Diagnostic Proof
+- **Decision**: Enforce automated assertions ensuring `duration` is 100% absent from pre-contact pipelines.
+- **Outcome**: A controlled diagnostic experiment proved that models including `duration` achieve an artificially inflated PR-AUC (0.6582) and ROC-AUC (0.9412). Because call duration is an outcome realized only *after* dialing, deploying such a model is impossible in practice. Strict pre-contact framing is ratified as production-mandatory.
